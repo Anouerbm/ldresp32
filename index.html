@@ -1,0 +1,137 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Dashboard Domotique - ESP32</title>
+    
+    <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-app.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-database.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-auth.js"></script>
+
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background-color: #f4f6f9;
+            color: #333;
+            margin: 0;
+            padding: 20px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+        h1 { color: #2c3e50; margin-bottom: 30px; text-align: center; }
+        .container { display: flex; gap: 20px; max-width: 800px; width: 100%; flex-wrap: wrap; justify-content: center; }
+        .card { background: white; border-radius: 12px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); padding: 25px; width: 280px; text-align: center; transition: transform 0.2s; }
+        .card:hover { transform: translateY(-5px); }
+        .card h2 { margin-top: 0; color: #7f8c8d; font-size: 1.2rem; text-transform: uppercase; }
+        .valeur { font-size: 2.5rem; font-weight: bold; color: #2980b9; margin: 20px 0; }
+        .btn { color: white; border: none; padding: 12px 24px; font-size: 1rem; border-radius: 8px; cursor: pointer; width: 100%; margin-top: 10px; font-weight: bold; }
+        .btn-on { background-color: #2ecc71; }
+        .btn-off { background-color: #e74c3c; }
+        .status-indicator { display: inline-block; width: 15px; height: 15px; border-radius: 50%; background-color: #7f8c8d; margin-right: 8px; }
+        .status-on { background-color: #2ecc71; box-shadow: 0 0 10px #2ecc71; }
+        #auth-status { margin-bottom: 15px; font-weight: bold; color: #7f8c8d; }
+    </style>
+</head>
+<body>
+
+    <h1>Tableau de Bord - ESP32 & Firebase</h1>
+    
+    <div id="auth-status">Connexion à Firebase en cours...</div>
+
+    <div class="container">
+        <div class="card">
+            <h2>Capteur de Lumière (LDR)</h2>
+            <div class="valeur" id="ldr-val">--</div>
+            <p id="ldr-status">Lecture en cours...</p>
+        </div>
+
+        <div class="card">
+            <h2>Contrôle Lampe (LED)</h2>
+            <div class="valeur" style="font-size: 1.5rem; display: flex; align-items: center; justify-content: center;">
+                <span id="led-dot" class="status-indicator"></span>
+                <span id="led-status-text">ÉTEINTE</span>
+            </div>
+            <button class="btn btn-on" onclick="controlerLED(true)">ALLUMER</button>
+            <button class="btn btn-off" onclick="controlerLED(false)">ÉTEINDRE</button>
+        </div>
+    </div>
+
+    <script>
+        // Configuration Firebase
+        const firebaseConfig = {
+            apiKey: "AIzaSyAoyIRI5RRbCkvfFVf2G9-YjjarH2khMP0",
+            authDomain: "abm1-cfb7e.firebaseapp.com",
+            databaseURL: "https://abm1-cfb7e-default-rtdb.firebaseio.com",
+            projectId: "abm1-cfb7e",
+            storageBucket: "abm1-cfb7e.firebasestorage.app",
+            messagingSenderId: "913812682300",
+            appId: "1:913812682300:web:90012eac699bb9c3cc7539"
+        };
+
+        // Initialisation
+        firebase.initializeApp(firebaseConfig);
+        const database = firebase.database();
+        const auth = firebase.auth();
+
+        // --- AUTHENTIFICATION AUTOMATIQUE DE L'APPLICATION WEB ---
+        auth.signInWithEmailAndPassword("anouertech@gmail.com", "123654")
+            .then((userCredential) => {
+                document.getElementById('auth-status').innerText = "✓ Authentifié avec succès en tant que admin";
+                document.getElementById('auth-status').style.color = "#27ae60";
+                
+                // Activer les écouteurs de la base de données seulement après connexion réussie
+                demarrerEcouteBaseDeDonnees();
+            })
+            .catch((error) => {
+                document.getElementById('auth-status').innerText = "❌ Erreur d'authentification : " + error.message;
+                document.getElementById('auth-status').style.color = "#e74c3c";
+            });
+
+        function demarrerEcouteBaseDeDonnees() {
+            // Lecture de la LDR
+            database.ref('/sensor/ldr').on('value', (snapshot) => {
+                const ldrValue = snapshot.val();
+                document.getElementById('ldr-val').innerText = ldrValue;
+                
+                const statusTxt = document.getElementById('ldr-status');
+                if (ldrValue > 2500) {
+                    statusTxt.innerText = "Obscurité (Lampe Auto)";
+                    statusTxt.style.color = "#e67e22";
+                } else {
+                    statusTxt.innerText = "Lumière suffisante";
+                    statusTxt.style.color = "#27ae60";
+                }
+            });
+
+            // Lecture de l'état de la LED
+            database.ref('/led/digital').on('value', (snapshot) => {
+                const ledState = snapshot.val();
+                const dot = document.getElementById('led-dot');
+                const txt = document.getElementById('led-status-text');
+
+                if (ledState === true) {
+                    dot.classList.add('status-on');
+                    txt.innerText = "ALLUMÉE";
+                    txt.style.color = "#2ecc71";
+                } else {
+                    dot.classList.remove('status-on');
+                    txt.innerText = "ÉTEINTE";
+                    txt.style.color = "#7f8c8d";
+                }
+            });
+        }
+
+        // Envoi des commandes
+        function controlerLED(etat) {
+            if(auth.currentUser) { // Vérifie qu'on est bien connecté avant d'écrire
+                database.ref('/led/digital').set(etat);
+                database.ref('/led/analog').set(etat ? 255 : 0);
+            } else {
+                alert("Action impossible : vous n'êtes pas authentifié.");
+            }
+        }
+    </script>
+</body>
+</html>
